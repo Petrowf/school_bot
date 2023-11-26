@@ -1,29 +1,38 @@
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, message
+from aiogram import Bot, Dispatcher, types, executor
+from aiogram.types import ReplyKeyboardMarkup, message, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 bot = Bot(os.getenv('TOKEN'))
 dp = Dispatcher(bot=bot)
-
+ttb = False
 main = ReplyKeyboardMarkup(resize_keyboard=True)
 main.add('Расписание').add('Новости').add('Оценки')
 
 main_admin = ReplyKeyboardMarkup(resize_keyboard=True)
 main_admin.add('Расписание').add('Новости').add('Оценки').add("Админ-панель")
 
-admin_panel = ReplyKeyboardMarkup(resize_keyboard=True)
-admin_panel.add('Добавить расписание').add('Добавить новость').add('Добавить оценки').add("Админ-панель")
+admin_panel = InlineKeyboardMarkup(row_width=2)
+admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
 
 
 @dp.message_handler(commands=["start"])
-async def cmd_srart(message: types.Message):
+async def cmd_start(message: types.Message):
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
     await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот",
                          reply_markup=main)
     if message.from_user.id == os.getenv('ADMIN_ID'):
         await message.answer(f'Вы авторизовались', reply_markup=main_admin)
+
+
+@dp.callback_query_handler(text="tmtb_change")
+async def send_random_value(callback: types.CallbackQuery):
+    await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
+    global ttb
+    ttb = True
+
+
 
 
 @dp.message_handler(commands=["id"])
@@ -33,8 +42,9 @@ async def cmd_id(message: types.Message):
 
 @dp.message_handler(text='Расписание')
 async def contacts(message: types.Message):
-    await message.answer(
-        f'Пока расписания нету')  # ЗДЕСЬ НУЖНО НАПИСАТЬ, ЧТО ДЕЛАЕТ БОТ, ЕСЛИ НАПИСАТЬ ЕМУ 'РАСПИСАНИЕ', ПОДОБНОЕ СДЕЛАТЬ И С ОЦЕНКАМИ И ДРУГИМИ КНОПКАМИ
+    photo = InputFile("time_table/ttable.png")
+    await message.answer("Вот расписание:")
+    await message.answer_photo(photo)
 
 
 @dp.message_handler(text='Админ-панель')
@@ -48,9 +58,10 @@ async def check_sticker(message: types.Message):
     await bot.send_message(message.from_user.id, str(message.chat.id))
 
 
-@dp.message_handler(content_types=["document", "foto"])
+@dp.message_handler(content_types=["photo"])
 async def forward_message(message: types.Message):
-    await bot.forward_message(os.getenv('GROUP_ID'), message.from_user.id, message.message_id)
+    if ttb:
+        await message.photo[-1].download('./time_table/ttable.png')
 
 
 @dp.message_handler()
@@ -59,4 +70,4 @@ async def anwser(message: types.Message):
 
 
 if __name__ == "__main__":
-    dp.start_polling()
+    executor.start_polling(dp)
