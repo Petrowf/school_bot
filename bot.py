@@ -1,14 +1,24 @@
+import openai
 from aiogram import Bot, Dispatcher, types, executor
-from aiogram.types import ReplyKeyboardMarkup, message, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import StatesGroup, State
+from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 bot = Bot(os.getenv('TOKEN'))
+group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot)
 ttb = False
 main = ReplyKeyboardMarkup(resize_keyboard=True)
 main.add('Расписание').add('Новости').add('Оценки')
+
+
+class BotState(StatesGroup):
+    news_text = State()
+    news_choice = State()
+
 
 main_admin = ReplyKeyboardMarkup(resize_keyboard=True)
 main_admin.add('Расписание').add('Новости').add('Оценки').add("Админ-панель")
@@ -31,8 +41,6 @@ async def send_random_value(callback: types.CallbackQuery):
     await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
     global ttb
     ttb = True
-
-
 
 
 @dp.message_handler(commands=["id"])
@@ -69,5 +77,53 @@ async def anwser(message: types.Message):
     await message.reply("я тебя не понимаю")
 
 
+@dp.message_handler(text='Новости', user_id=os.getenv('ADMIN_ID'))
+async def ask_for_news(message: types.Message):
+    await message.answer("Введите текст новости:")
+    # Сохраняем текст новости в контексте пользователя
+    await BotState.news_text.set()
+
+
+@dp.message_handler(state=BotState.news_text)
+async def edit_news(message: types.Message, state: FSMContext):
+    # Получаем текст новости из контекста пользователя
+    news_text = await state.get_data()
+    # Редактируем текст новости с помощью GPT от OpenAI
+    edited_news_text = openai.Completion.create(
+        engine="davinci",
+        prompt=news_text,
+        max_tokens=1024,
+        n=1,
+        stop=None,
+        temperature=0.5,
+    ).choices[0].text
+    # Сохраняем отредактированный текст новости в контексте пользователя
+    await state.update_data(edited_news_text=edited_news_text)
+    # Предлагаем выбрать между введенным и отредактированным текстом новости
+    await message.answer("Выберите текст новости:", reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Введенный текст", callback_data="original")],
+            [InlineKeyboardButton(text="Отредактированный текст", callback_data="edited")],
+        ]
+    ))
+    # Сохраняем состояние пользователя
+    await BotState.news_choice.set()
+
+
+@dp.callback_query_handler(state=BotState.news_choice)
+async def send_news(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем выбранный пользователем текст новости из контекста пользователя
+    data = await state.get_data()
+    if callback.data == "original":
+        news_text = data["news_text"]
+    else:
+        news_text = data["edited_news_text"]
+    # Публикуем новость в группе
+    await bot.send_message(group_id, news_text)
+    # Сбрасываем состояние пользователя
+    await state.finish()
+
 if __name__ == "__main__":
     executor.start_polling(dp)
+
+
