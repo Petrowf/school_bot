@@ -1,5 +1,6 @@
 import openai
 from aiogram import Bot, Dispatcher, types, executor
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,7 +10,7 @@ import os
 load_dotenv()
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
-dp = Dispatcher(bot=bot)
+dp = Dispatcher(bot=bot, storage=MemoryStorage())
 ttb = False
 main = ReplyKeyboardMarkup(resize_keyboard=True)
 main.add('Расписание').add('Новости').add('Оценки')
@@ -24,7 +25,8 @@ main_admin = ReplyKeyboardMarkup(resize_keyboard=True)
 main_admin.add('Расписание').add('Новости').add('Оценки').add("Админ-панель")
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
-admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
+admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
+                InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"))
 
 
 @dp.message_handler(commands=["start"])
@@ -39,8 +41,6 @@ async def cmd_start(message: types.Message):
 @dp.callback_query_handler(text="tmtb_change")
 async def send_random_value(callback: types.CallbackQuery):
     await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
-    global ttb
-    ttb = True
 
 
 @dp.message_handler(commands=["id"])
@@ -72,45 +72,29 @@ async def forward_message(message: types.Message):
         await message.photo[-1].download('./time_table/ttable.png')
 
 
-@dp.message_handler()
-async def anwser(message: types.Message):
-    await message.reply("я тебя не понимаю")
-
-
-@dp.message_handler(text='Новости', user_id=os.getenv('ADMIN_ID'))
-async def ask_for_news(message: types.Message):
-    await message.answer("Введите текст новости:")
+@dp.callback_query_handler(text="nws_change")
+async def ask_for_news(callback: types.CallbackQuery, state: FSMContext):
+    await bot.send_message(callback.message.chat.id, "Введите текст новости:")
     # Сохраняем текст новости в контексте пользователя
-    await BotState.news_text.set()
+    await state.set_state(BotState.news_text.state)
 
 
-@dp.message_handler(state=BotState.news_text)
 async def edit_news(message: types.Message, state: FSMContext):
-    # Получаем текст новости из контекста пользователя
-    news_text = await state.get_data()
-    # Редактируем текст новости с помощью GPT от OpenAI
-    edited_news_text = openai.Completion.create(
-        engine="davinci",
-        prompt=news_text,
-        max_tokens=1024,
-        n=1,
-        stop=None,
-        temperature=0.5,
-    ).choices[0].text
-    # Сохраняем отредактированный текст новости в контексте пользователя
-    await state.update_data(edited_news_text=edited_news_text)
-    # Предлагаем выбрать между введенным и отредактированным текстом новости
-    await message.answer("Выберите текст новости:", reply_markup=InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Введенный текст", callback_data="original")],
-            [InlineKeyboardButton(text="Отредактированный текст", callback_data="edited")],
-        ]
-    ))
-    # Сохраняем состояние пользователя
-    await BotState.news_choice.set()
+    async with state.proxy() as data:
+        edited_news_text = "Привет"
+        data["news_text"] = message.text
+        data["edited_news_text"] = edited_news_text
+        await bot.send_message(message.chat.id, f"Отредактированный текст: {edited_news_text}")
+
+        await message.answer("Выберите текст новости:", reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Введенный текст", callback_data="original")],
+                [InlineKeyboardButton(text="Отредактированный текст", callback_data="edited")],
+            ]
+        ))
+        await state.set_state(BotState.news_choice.state)
 
 
-@dp.callback_query_handler(state=BotState.news_choice)
 async def send_news(callback: types.CallbackQuery, state: FSMContext):
     # Получаем выбранный пользователем текст новости из контекста пользователя
     data = await state.get_data()
@@ -120,10 +104,17 @@ async def send_news(callback: types.CallbackQuery, state: FSMContext):
         news_text = data["edited_news_text"]
     # Публикуем новость в группе
     await bot.send_message(group_id, news_text)
+    print("Работает!")
     # Сбрасываем состояние пользователя
     await state.finish()
 
-if __name__ == "__main__":
-    executor.start_polling(dp)
 
+def register_handlers(dp: Dispatcher):
+    dp.register_message_handler(edit_news, state=BotState.news_text)
+    dp.register_callback_query_handler(send_news, state=BotState.news_choice)
+
+
+if __name__ == "__main__":
+    register_handlers(dp)
+    executor.start_polling(dp)
 
