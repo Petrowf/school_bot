@@ -5,6 +5,10 @@ from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import os
+import sqlite3 as sq
+
+
+
 
 load_dotenv()
 bot = Bot(os.getenv('TOKEN'))
