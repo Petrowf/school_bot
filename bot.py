@@ -67,11 +67,10 @@ async def check_sticker(message: types.Message):
     await bot.send_message(message.from_user.id, str(message.chat.id))
 
 
-async def ttb_save(message):
-    print("Словил!")
+async def ttb_save(message, state: FSMContext):
     await message.photo[-1].download('./time_table/ttable.png')
     await message.answer("Расписание успешно изменено!")
-    print("Скачано!")
+    await state.finish()
 
 
 @dp.callback_query_handler(text="nws_change")
@@ -121,7 +120,7 @@ async def send_news(callback: types.CallbackQuery, state: FSMContext):
 def register_handlers(dp: Dispatcher):
     dp.register_message_handler(edit_news, state=BotState.news_text)
     dp.register_callback_query_handler(send_news, state=BotState.news_choice)
-    dp.register_message_handler(ttb_save, state=BotState.ttb_wait)
+    dp.register_message_handler(ttb_save, state=BotState.ttb_wait, content_types=["photo"])
 
 
 if __name__ == "__main__":
