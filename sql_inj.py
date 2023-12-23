@@ -1,7 +1,7 @@
 import sqlite3 as sq
 
-def proverka_prav(message, cur, con):
-    query = f'SELECT name FROM users WHERE id={id}'
+def proverka_prav(message, cur):
+    query = f'SELECT user_name FROM users WHERE id={message.from_user.id}'
     cur.execute(query)
     us_name = cur.fetchone()
     last_name = message.from_user.last_name
@@ -10,7 +10,9 @@ def proverka_prav(message, cur, con):
     id = message.from_user.id
     access = 'common'
     if us_name == None:
-        f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
+        us_name = message.from_user.username
+        query = f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
+        cur.execute(query)
 
 
 if __name__ == "__main__":
