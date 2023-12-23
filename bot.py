@@ -36,20 +36,21 @@ async def cmd_start(message: types.Message):
     global cur
     query = f'SELECT user_name FROM users WHERE id={message.from_user.id}'
     cur.execute(query)
-    us_name = cur.fetchone()
-    last_name = message.from_user.last_name
-    first_name = message.from_user.first_name
+    user_name = cur.fetchone()
+    surname = message.from_user.last_name
+    name = message.from_user.first_name
     chat_id = message.chat.id
     id = message.from_user.id
     access = 'common'  # common - это пользователь без прав
-    if us_name is None:
-        us_name = message.from_user.username
-        query = f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
-        cur.execute(query)
+    if user_name is None:
+        new_user_name = message.from_user.username
+        query = 'INSERT INTO users (id, user_name, chat_id, name, surname, access) VALUES (?, ?, ?, ?, ?, ?);'
+        cur.execute(query, (id, new_user_name, chat_id, name, surname, access))
+        con.commit()
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
     await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот",
                          reply_markup=main)
-    if message.chat.id == int(os.getenv('ADMIN_ID')):
+    if str(message.chat.id) in os.getenv('ADMIN_ID'):
         await message.answer(f'Вы авторизовались.', reply_markup=admin_panel)
 
 
