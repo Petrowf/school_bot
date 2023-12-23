@@ -6,6 +6,7 @@ from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import os
+import sqlite3 as sq
 
 load_dotenv()
 openai.api_key = os.getenv('OPENAI')
@@ -15,6 +16,8 @@ group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
 main = ReplyKeyboardMarkup(resize_keyboard=True)
 main.add('Расписание').add('Новости').add('Оценки')
+con = sq.connect('users.db')
+cur = con.cursor()
 
 
 class BotState(StatesGroup):
@@ -30,6 +33,19 @@ admin_panel.add(InlineKeyboardButton("Поменять расписание", ca
 
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
+    global cur
+    query = f'SELECT user_name FROM users WHERE id={message.from_user.id}'
+    cur.execute(query)
+    us_name = cur.fetchone()
+    last_name = message.from_user.last_name
+    first_name = message.from_user.first_name
+    chat_id = message.chat.id
+    id = message.from_user.id
+    access = 'common'  # common - это пользователь без прав
+    if us_name is None:
+        us_name = message.from_user.username
+        query = f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
+        cur.execute(query)
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
     await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот",
                          reply_markup=main)

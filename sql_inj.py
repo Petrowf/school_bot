@@ -1,5 +1,6 @@
 import sqlite3 as sq
 
+
 def proverka_prav(message, cur):
     query = f'SELECT user_name FROM users WHERE id={message.from_user.id}'
     cur.execute(query)
@@ -8,7 +9,7 @@ def proverka_prav(message, cur):
     first_name = message.from_user.first_name
     chat_id = message.chat.id
     id = message.from_user.id
-    access = 'common' # common - это пользователь без прав
+    access = 'common'  # common - это пользователь без прав
     if us_name == None:
         us_name = message.from_user.username
         query = f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
