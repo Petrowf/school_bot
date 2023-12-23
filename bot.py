@@ -24,11 +24,13 @@ class BotState(StatesGroup):
     news_text = State()
     news_choice = State()
     ttb_wait = State()
+    rolename_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
-                InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"))
+                InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
+                InlineKeyboardButton("Изменить роль пользователя", callback_data="role_change"))
 
 
 @dp.message_handler(commands=["start"])
@@ -61,9 +63,26 @@ async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
     print("Work!")
 
 
+@dp.callback_query_handler(text="role_change")
+async def wait_role(callback: types.CallbackQuery, state: FSMContext):
+    await bot.send_message(callback.message.chat.id, "Какая роль будет у пользователя?")
+    await state.set_state(BotState.ttb_wait.state)
+    print("Work!")
+
+
 @dp.message_handler(commands=["id"])
 async def cmd_id(message: types.Message):
     await message.answer(f"{message.chat.id}")
+
+
+@dp.callback_query_handler(text="role_change")
+async def rc(callback: types.CallbackQuery, state: FSMContext):
+    global cur, con
+    id = callback.message.chat.id
+    query = f'SELECT INTO users (?)'
+    cur.execute(query, id)
+    query = f'REPLACE INTO users (access) VALUES (?)'
+    cur.execute(query, id)
 
 
 @dp.message_handler(text='Расписание')
