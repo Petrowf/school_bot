@@ -14,6 +14,10 @@ def proverka_prav(message, cur):
         query = f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
         cur.execute(query)
 
+def izmenenie_prav(access, message):
+    #if access == f"SELECT access FROM users where user_name={message.from_user.username}":
+
+
 
 if __name__ == "__main__":
     con = sq.connect('users.db')
