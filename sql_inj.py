@@ -8,7 +8,7 @@ def proverka_prav(message, cur):
     first_name = message.from_user.first_name
     chat_id = message.chat.id
     id = message.from_user.id
-    access = 'common'
+    access = 'common' # common - это пользователь без прав
     if us_name == None:
         us_name = message.from_user.username
         query = f'INSERT INTO users VALUES({id, chat_id, us_name, first_name, last_name, access})'
