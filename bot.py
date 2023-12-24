@@ -24,19 +24,28 @@ class BotState(StatesGroup):
     news_text = State()
     news_choice = State()
     ttb_wait = State()
+    role_wait = State()
+    un_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
-                InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"))
+                InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
+                InlineKeyboardButton("Поменять роль", callback_data="role_change"))
+planner_panel = InlineKeyboardMarkup()
+planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
+zvr_panel = InlineKeyboardMarkup()
+zvr_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
+role_panel = ReplyKeyboardMarkup()
+role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('ЗВР')
 
 
 @dp.message_handler(commands=["start"])
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
     global cur
-    query = f'SELECT user_name FROM users WHERE id={message.from_user.id}'
+    query = f'SELECT user_name, access FROM users WHERE id={message.from_user.id}'
     cur.execute(query)
-    user_name = cur.fetchone()
+    user_name, role = cur.fetchone()
     surname = message.from_user.last_name
     name = message.from_user.first_name
     chat_id = message.chat.id
@@ -50,15 +59,36 @@ async def cmd_start(message: types.Message):
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
     await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот",
                          reply_markup=main)
-    if str(message.chat.id) in os.getenv('ADMIN_ID'):
-        await message.answer(f'Вы авторизовались.', reply_markup=admin_panel)
+    async with state.proxy() as data:
+        if role == 'admin':
+            data['urole'] = 'admin'
+            await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
+        elif role == 'planner':
+            data['urole'] = 'planner'
+            await message.answer(f'Здравствуйте планировщик расписаний!', reply_markup=planner_panel)
+        elif role == 'zvr':
+            data['urole'] = 'zvr'
+            await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
 
 
 @dp.callback_query_handler(text="tmtb_change")
 async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
-    await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
-    await state.set_state(BotState.ttb_wait.state)
-    print("Work!")
+    async with state.proxy() as data:
+        if data['urole'] == 'admin':
+            await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
+            await state.set_state(BotState.ttb_wait.state)
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для редактирования расписания")
+
+
+@dp.callback_query_handler(text="role_change")
+async def wait_role(callback: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        if data['urole'] == 'admin':
+            await bot.send_message(callback.message.chat.id, "Выберите роль пользователя", reply_markup=role_panel)
+            await state.set_state(BotState.role_wait.state)
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для изменения роли пользователя")
 
 
 @dp.message_handler(commands=["id"])
@@ -66,16 +96,53 @@ async def cmd_id(message: types.Message):
     await message.answer(f"{message.chat.id}")
 
 
+@dp.message_handler(state=BotState.role_wait)
+async def role_set(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        if message.text == 'Школьник/Сотрудник':
+            await message.answer("Теперь напишите username пользователя (по @)")
+            data["role"] = "commonn"
+            await state.finish()
+            await state.set_state(BotState.un_wait.state)
+        elif message.text == 'Администратор':
+            await message.answer("Теперь напишите username пользователя (по @)")
+            data["role"] = "admin"
+            await state.finish()
+            await state.set_state(BotState.un_wait.state)
+        elif message.text == 'ЗВР':
+            data["role"] = "zvr"
+            await state.finish()
+            await message.answer("Теперь напишите username пользователя (по @)")
+            await state.set_state(BotState.un_wait.state)
+        elif message.text == 'Планировщик':
+            await message.answer("Теперь напишите username пользователя (по @)")
+            data["role"] = "planner"
+            await state.finish()
+            await state.set_state(BotState.un_wait.state)
+        else:
+            await message.answer("Задана неправильная роль. Попробуйте ещё раз", reply_markup=admin_panel)
+            await state.finish()
+
+
+@dp.message_handler(state=BotState.un_wait)
+async def role_change(message: types.Message, state: FSMContext):
+    try:
+        global cur, con
+        data = await state.get_data()
+        query = f"UPDATE users SET access = ? WHERE user_name = ?"
+        cur.execute(query, (data["role"], message.text))
+        con.commit()
+        await message.answer("Роль успешно изменена!")
+    except Exception as e:
+        await message.answer("Задан неправильный username. Попробуйте ещё раз", reply_markup=admin_panel)
+    await state.finish()
+
+
 @dp.message_handler(text='Расписание')
 async def contacts(message: types.Message):
     photo = InputFile("time_table/ttable.png")
     await message.answer("Вот расписание:")
     await message.answer_photo(photo)
-
-
-@dp.callback_query_handler(text="admin-ui")
-async def contacts(message: types.Message):
-    await message.answer(f'Вы вошли в админ панель', reply_markup=admin_panel)
 
 
 @dp.message_handler(content_types=["sticker"])
@@ -92,9 +159,13 @@ async def ttb_save(message, state: FSMContext):
 
 @dp.callback_query_handler(text="nws_change")
 async def ask_for_news(callback: types.CallbackQuery, state: FSMContext):
-    await bot.send_message(callback.message.chat.id, "Введите текст новости:")
-    # Сохраняем текст новости в контексте пользователя
-    await state.set_state(BotState.news_text.state)
+    async with state.proxy() as data:
+        if data['urole'] == 'admin' or data['urole'] == 'zvr':
+            await bot.send_message(callback.message.chat.id, "Введите текст новости:")
+            # Сохраняем текст новости в контексте пользователя
+            await state.set_state(BotState.news_text.state)
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для публикации новостей")
 
 
 async def edit_news(message: types.Message, state: FSMContext):
