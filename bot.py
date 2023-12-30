@@ -15,7 +15,7 @@ bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
 main = ReplyKeyboardMarkup(resize_keyboard=True)
-main.add('Расписание').add('Новости').add('Оценки')
+main.add('Расписание')
 con = sq.connect('users.db')
 cur = con.cursor()
 
@@ -26,18 +26,20 @@ class BotState(StatesGroup):
     ttb_wait = State()
     role_wait = State()
     un_wait = State()
+    report_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
                 InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
-                InlineKeyboardButton("Поменять роль", callback_data="role_change"))
+                InlineKeyboardButton("Поменять роль", callback_data="role_change"),
+                InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"))
 planner_panel = InlineKeyboardMarkup()
 planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
 zvr_panel = InlineKeyboardMarkup()
 zvr_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
 role_panel = ReplyKeyboardMarkup()
-role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('ЗВР')
+role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('Редактор новостей')
 
 
 @dp.message_handler(commands=["start"])
@@ -81,6 +83,16 @@ async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
             await bot.send_message(callback.message.chat.id, "У вас нет полномочий для редактирования расписания")
 
 
+@dp.callback_query_handler(text="report")
+async def get_report(callback: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        if data['urole'] == 'admin':
+            await bot.send_message(callback.message.chat.id, "Отправьте описание жалобы")
+            await state.set_state(BotState.report_wait.state)
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для отправки жалобы")
+
+
 @dp.callback_query_handler(text="role_change")
 async def wait_role(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
@@ -109,7 +121,7 @@ async def role_set(message: types.Message, state: FSMContext):
             data["role"] = "admin"
             await state.finish()
             await state.set_state(BotState.un_wait.state)
-        elif message.text == 'ЗВР':
+        elif message.text == 'Редактор новостей':
             data["role"] = "zvr"
             await state.finish()
             await message.answer("Теперь напишите username пользователя (по @)")
@@ -138,17 +150,17 @@ async def role_change(message: types.Message, state: FSMContext):
     await state.finish()
 
 
+@dp.message_handler(state=BotState.report_wait)
+async def role_change(message: types.Message, state: FSMContext):
+    await bot.send_message(1109823137, "Вам отправлена жалоба: " + message.text)
+    await state.finish()
+
+
 @dp.message_handler(text='Расписание')
 async def contacts(message: types.Message):
     photo = InputFile("time_table/ttable.png")
     await message.answer("Вот расписание:")
     await message.answer_photo(photo)
-
-
-@dp.message_handler(content_types=["sticker"])
-async def check_sticker(message: types.Message):
-    await message.answer(message.sticker.file_id)
-    await bot.send_message(message.from_user.id, str(message.chat.id))
 
 
 async def ttb_save(message, state: FSMContext):
@@ -171,12 +183,13 @@ async def ask_for_news(callback: types.CallbackQuery, state: FSMContext):
 async def edit_news(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         edited_news_text = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[{"role": "system", "content": """Ты - редактор публикаций. Ты должен отвечать только 
             отредактированным текстом. Нельзя спрашивать о чём-либо и давать варианты. ТОЛЬКО отредактированный текст.
             Даже без фраз на подобии "Вот, что у меня получилось."."""}
                 , {"role": "user", "content": "Отредактируй эту публикацию: " + message.text}],
             stream=False,
+            max_tokens=300
         ).choices[0].message.content
         data["news_text"] = message.text
         data["edited_news_text"] = edited_news_text
