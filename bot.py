@@ -180,27 +180,31 @@ async def role_change(message: types.Message, state: FSMContext):
 @dp.message_handler(state=BotState.wrkr_wait, content_types=['photo'])
 async def wrkr_add(message: types.Message, state: FSMContext):
     wrkr_i = list(message.caption.split("00"))
-    wrkr_i[6] = int(wrkr_i[6])
-    tkn = message.photo[-1].file_id
-    path = f'./wrkrs/{tkn}'
-    wrkr_i += [path]
-    await message.photo[-1].download(path)
-    query = 'INSERT INTO workers ( name, surname, last_name, phone, work, education, experience, email, photo) VALUES ' \
-            '(?, ?, ' \
-            '?, ' \
-            '?, ?, ?, ?, ?, ?);'
-    wcur.execute(query, wrkr_i)
-    wcon.commit()
-    query = f'SELECT id FROM workers WHERE phone={wrkr_i[3]}'
-    wcur.execute(query)
-    await message.answer(f"Сотрудник успешно добавлен")
-    await state.finish()
+    if not "@" in wrkr_i[-1] or not "." in wrkr_i[-1]:
+        await message.answer(f"Неправильная почта, попробуйте ещё раз")
+    else:
+        wrkr_i[6] = int(wrkr_i[6])
+        tkn = message.photo[-1].file_id
+        path = f'./wrkrs/{tkn}'
+        wrkr_i += [path]
+        await message.photo[-1].download(path)
+        query = 'INSERT INTO workers ( name, surname, last_name, ' \
+                'phone, work, education, experience, email, photo) VALUES ' \
+                '(?, ?, ' \
+                '?, ' \
+                '?, ?, ?, ?, ?, ?);'
+        wcur.execute(query, wrkr_i)
+        wcon.commit()
+        query = f'SELECT id FROM workers WHERE phone={wrkr_i[3]}'
+        wcur.execute(query)
+        await message.answer(f"Сотрудник успешно добавлен")
+        await state.finish()
 
 
 @dp.message_handler(state=BotState.gwrkr_wait)
 async def wrkr_get(message: types.Message, state: FSMContext):
     query = f'SELECT name, surname, last_name, phone, work, education, experience, email, photo FROM workers WHERE ' \
-            f'(name, surname, last_name) = (?, ?, ?)'
+            f'(surname, name, last_name) = (?, ?, ?)'
     wcur.execute(query, tuple(message.text.split()))
     name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
     photo = InputFile(photo)
