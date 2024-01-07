@@ -1,3 +1,6 @@
+import os
+import sqlite3 as sq
+
 import openai
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -5,9 +8,6 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
-import os
-import sqlite3 as sq
-import secrets
 
 load_dotenv()
 openai.api_key = os.getenv('OPENAI')
@@ -15,8 +15,9 @@ openai.api_base = "http://localhost:1337/v1"
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
-main = ReplyKeyboardMarkup(resize_keyboard=True)
-main.add('Расписание')
+main = InlineKeyboardMarkup(row_width=2)
+main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
+         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 con = sq.connect('users.db')
 cur = con.cursor()
 wcon = sq.connect('workers.db')
@@ -40,18 +41,19 @@ admin_panel.add(InlineKeyboardButton("Поменять расписание", ca
                 InlineKeyboardButton("Поменять роль", callback_data="role_change"),
                 InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"),
                 InlineKeyboardButton("Добавить сотрудника", callback_data="wrkr_add"),
-                InlineKeyboardButton("Редактировать сотрудника", callback_data="wrkr_edit"))
+                InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 planner_panel = InlineKeyboardMarkup()
-planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
+planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
+                  InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 zvr_panel = InlineKeyboardMarkup()
-zvr_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
+zvr_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
+              InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 role_panel = ReplyKeyboardMarkup()
 role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('Редактор новостей')
 
 
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message, state: FSMContext):
-    global cur
     query = f'SELECT user_name, access FROM users WHERE id={message.from_user.id}'
     cur.execute(query)
     user_name, role = cur.fetchone()
@@ -92,15 +94,11 @@ async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
             await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
 
 
-@dp.callback_query_handler(text="wrkr_edit")
+@dp.callback_query_handler(text="wrkr_get")
 async def wait_eworker(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin':
-            await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике в указанной форме:
+    await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике в указанной форме:
 Ф И О сотрудника""")
-            await state.set_state(BotState.wrkr_wait.state)
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
+    await state.set_state(BotState.gwrkr_wait.state)
 
 
 @dp.callback_query_handler(text="tmtb_change")
@@ -169,7 +167,6 @@ async def role_set(message: types.Message, state: FSMContext):
 @dp.message_handler(state=BotState.un_wait)
 async def role_change(message: types.Message, state: FSMContext):
     try:
-        global cur, con
         data = await state.get_data()
         query = f"UPDATE users SET access = ? WHERE user_name = ?"
         cur.execute(query, (data["role"], message.text))
@@ -219,11 +216,10 @@ async def role_change(message: types.Message, state: FSMContext):
     await state.finish()
 
 
-@dp.message_handler(text='Расписание')
-async def contacts(message: types.Message):
+@dp.callback_query_handler(text="ttb")
+async def contacts(callback: types.CallbackQuery):
     photo = InputFile("time_table/ttable.png")
-    await message.answer("Вот расписание:")
-    await message.answer_photo(photo)
+    await bot.send_photo(callback.message.chat.id, photo=photo, caption="Расписание:")
 
 
 async def ttb_save(message, state: FSMContext):
