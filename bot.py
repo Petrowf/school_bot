@@ -7,7 +7,7 @@ from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, 
 from dotenv import load_dotenv
 import os
 import sqlite3 as sq
-
+import secrets
 load_dotenv()
 openai.api_key = os.getenv('OPENAI')
 openai.api_base = "http://localhost:1337/v1"
@@ -18,6 +18,8 @@ main = ReplyKeyboardMarkup(resize_keyboard=True)
 main.add('Расписание')
 con = sq.connect('users.db')
 cur = con.cursor()
+wcon = sq.connect('workers.db')
+wcur = wcon.cursor()
 
 
 class BotState(StatesGroup):
@@ -27,13 +29,17 @@ class BotState(StatesGroup):
     role_wait = State()
     un_wait = State()
     report_wait = State()
+    wrkr_wait = State()
+    ewrkr_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
                 InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
                 InlineKeyboardButton("Поменять роль", callback_data="role_change"),
-                InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"))
+                InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"),
+                InlineKeyboardButton("Добавить сотрудника", callback_data="wrkr_add"),
+                InlineKeyboardButton("Редактировать сотрудника", callback_data="wrkr_edit"))
 planner_panel = InlineKeyboardMarkup()
 planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"))
 zvr_panel = InlineKeyboardMarkup()
@@ -73,10 +79,33 @@ async def cmd_start(message: types.Message, state: FSMContext):
             await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
 
 
+@dp.callback_query_handler(text="wrkr_add")
+async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        if data['urole'] == 'admin':
+            await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:
+Имя00Фамилия00Отчество00Телефон00Должность00Карьера00Опыт(в годах)00Почта""")
+            await state.set_state(BotState.wrkr_wait.state)
+
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
+
+
+@dp.callback_query_handler(text="wrkr_edit")
+async def wait_eworker(callback: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        if data['urole'] == 'admin':
+            await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике в указанной форме:
+            либо ФИО=Ф И О сотрудника, либо ID=id сотрудника""")
+            await state.set_state(BotState.wrkr_wait.state)
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
+
+
 @dp.callback_query_handler(text="tmtb_change")
 async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
-        if data['urole'] == 'admin':
+        if data['urole'] == 'admin' or data['urole'] == 'planner':
             await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
             await state.set_state(BotState.ttb_wait.state)
         else:
@@ -147,6 +176,27 @@ async def role_change(message: types.Message, state: FSMContext):
         await message.answer("Роль успешно изменена!")
     except Exception as e:
         await message.answer("Задан неправильный username. Попробуйте ещё раз", reply_markup=admin_panel)
+    await state.finish()
+
+
+@dp.message_handler(state=BotState.wrkr_wait, content_types=['photo'])
+async def wrkr_add(message: types.Message, state: FSMContext):
+    wrkr_i = list(message.caption.split("00"))
+    wrkr_i[6] = int(wrkr_i[6])
+    tkn = secrets.token_urlsafe(8)
+    path = f'./wrkrs/{tkn}'
+    wrkr_i += [path]
+    await message.photo[-1].download(path)
+    query = 'INSERT INTO workers ( name, surname, last_name, phone, work, education, experience, email, photo) VALUES ' \
+            '(?, ?, ' \
+            '?, ' \
+            '?, ?, ?, ?, ?, ?);'
+    wcur.execute(query, wrkr_i)
+    wcon.commit()
+    query = f'SELECT id FROM workers WHERE phone={wrkr_i[3]}'
+    wcur.execute(query)
+    id = wcur.fetchone()
+    await message.answer(f"Сотрудник успешно добавлен, его id = {id}")
     await state.finish()
 
 
