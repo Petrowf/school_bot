@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import os
 import sqlite3 as sq
 import secrets
+
 load_dotenv()
 openai.api_key = os.getenv('OPENAI')
 openai.api_base = "http://localhost:1337/v1"
@@ -30,7 +31,7 @@ class BotState(StatesGroup):
     un_wait = State()
     report_wait = State()
     wrkr_wait = State()
-    ewrkr_wait = State()
+    gwrkr_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
@@ -96,7 +97,7 @@ async def wait_eworker(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         if data['urole'] == 'admin':
             await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике в указанной форме:
-            либо ФИО=Ф И О сотрудника, либо ID=id сотрудника""")
+Ф И О сотрудника""")
             await state.set_state(BotState.wrkr_wait.state)
         else:
             await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
@@ -183,7 +184,7 @@ async def role_change(message: types.Message, state: FSMContext):
 async def wrkr_add(message: types.Message, state: FSMContext):
     wrkr_i = list(message.caption.split("00"))
     wrkr_i[6] = int(wrkr_i[6])
-    tkn = secrets.token_urlsafe(8)
+    tkn = message.photo[-1].file_id
     path = f'./wrkrs/{tkn}'
     wrkr_i += [path]
     await message.photo[-1].download(path)
@@ -195,8 +196,20 @@ async def wrkr_add(message: types.Message, state: FSMContext):
     wcon.commit()
     query = f'SELECT id FROM workers WHERE phone={wrkr_i[3]}'
     wcur.execute(query)
-    id = wcur.fetchone()
-    await message.answer(f"Сотрудник успешно добавлен, его id = {id}")
+    await message.answer(f"Сотрудник успешно добавлен")
+    await state.finish()
+
+
+@dp.message_handler(state=BotState.gwrkr_wait)
+async def wrkr_get(message: types.Message, state: FSMContext):
+    query = f'SELECT name, surname, last_name, phone, work, education, experience, email, photo FROM workers WHERE ' \
+            f'(name, surname, last_name) = (?, ?, ?)'
+    wcur.execute(query, tuple(message.text.split()))
+    name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
+    photo = InputFile(photo)
+
+    await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" Телефон: {phone}, Должность: {work}, "
+                                                                       f"Карьера: {education}, Опыт: {experience}, Почта: {email}")
     await state.finish()
 
 
