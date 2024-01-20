@@ -15,10 +15,10 @@ def proverka_prav(message, cur):
         cur.execute(query)
 
 def izmenenie_prav(access, message):
-    #if access == f"SELECT access FROM users where user_name={message.from_user.username}":
+    if access == f"SELECT access FROM users where user_name={message.from_user.username}":
 
 
-
+# название начало конец контактное_лицо тгтег
 if __name__ == "__main__":
     con = sq.connect('users.db')
     cur = con.cursor()
