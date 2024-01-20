@@ -17,11 +17,15 @@ group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
 main = InlineKeyboardMarkup(row_width=2)
 main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
-         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
+         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"),
+         InlineKeyboardButton("Мероприятия", callback_data="ev_get"))
 con = sq.connect('users.db')
 cur = con.cursor()
 wcon = sq.connect('workers.db')
 wcur = wcon.cursor()
+
+evcn = sq.connect('events.db')
+evcur = wcon.cursor()
 
 
 class BotState(StatesGroup):
@@ -33,11 +37,14 @@ class BotState(StatesGroup):
     report_wait = State()
     wrkr_wait = State()
     gwrkr_wait = State()
+    ev_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
                 InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
+                InlineKeyboardButton("Мероприятия", callback_data="ev_get"),
+                InlineKeyboardButton("Опубликовать мероприятие", callback_data="ev_create"),
                 InlineKeyboardButton("Поменять роль", callback_data="role_change"),
                 InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"),
                 InlineKeyboardButton("Добавить сотрудника", callback_data="wrkr_add"),
@@ -101,6 +108,33 @@ async def wait_eworker(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BotState.gwrkr_wait.state)
 
 
+@dp.callback_query_handler(text="ae")
+async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        if data['urole'] == 'admin':
+            await bot.send_message(callback.message.chat.id, """Напишите информацию о мероприятии таким форматом:
+            Название
+            Дата начала
+            Дата конца
+            Организатор
+            Телеграмм тэг""")
+            await state.set_state(BotState.ev_wait.state)
+
+        else:
+            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления мероприятия")
+
+
+@dp.message_handler(state=BotState.ev_wait)
+async def wrkr_add(message: types.Message, state: FSMContext):
+    wrkr_i = list(message.caption.split("\n"))
+    query = 'INSERT INTO workers ( name, time_start, time_end, contact_person, tg_teg) VALUES ' \
+            '(?,?,?,?,?);'
+    evcur.execute(query, (wrkr_i[0], wrkr_i[1], wrkr_i[2], wrkr_i[3], wrkr_i[4]))
+    evcn.commit()
+    await message.answer(f"Мероприятие успешно добавлено")
+    await state.finish()
+
+
 @dp.callback_query_handler(text="tmtb_change")
 async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
@@ -129,6 +163,23 @@ async def wait_role(callback: types.CallbackQuery, state: FSMContext):
             await state.set_state(BotState.role_wait.state)
         else:
             await bot.send_message(callback.message.chat.id, "У вас нет полномочий для изменения роли пользователя")
+
+
+@dp.callback_query_handler(text="ge")
+async def get_events(callback: types.CallbackQuery):
+    query = f'SELECT * from events'
+    cur.execute(query)
+    mp = cur.fetchall()
+    print("Всего строк:  ", len(mp))
+    print("Вывод каждой строки")
+    text = ""
+    for row in mp:
+        text += "\nНазвание:", row[0]
+        text += "\nНачало:", row[1]
+        text += "\nКонец:", row[2]
+        text += "\nОрганизатор:", row[3]
+        text += "\nТег в Телеграмме:", row[4], "\n\n"
+    await bot.send_message(callback.id, "Мероприятие")
 
 
 @dp.message_handler(commands=["id"])
@@ -209,8 +260,8 @@ async def wrkr_get(message: types.Message, state: FSMContext):
     name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
     photo = InputFile(photo)
 
-    await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" Телефон: {phone}, Должность: {work}, "
-                                                                       f"Карьера: {education}, Опыт: {experience}, Почта: {email}")
+    await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" Телефон: {phone}, \nДолжность: {work}, "
+                                                                       f"\nКарьера: {education}, \nОпыт: {experience}, \nПочта: {email}")
     await state.finish()
 
 
