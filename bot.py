@@ -61,9 +61,12 @@ role_panel.add('Школьник/Сотрудник').add('Администра�
 
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message, state: FSMContext):
-    query = f'SELECT user_name, access FROM users WHERE id={message.from_user.id}'
-    cur.execute(query)
-    user_name, role = cur.fetchone()
+    try:
+        query = f'SELECT user_name, access FROM users WHERE id={message.from_user.id}'
+        cur.execute(query)
+        user_name, role = cur.fetchone()
+    except:
+        user_name, role = None, None
     surname = message.from_user.last_name
     name = message.from_user.first_name
     chat_id = message.chat.id
