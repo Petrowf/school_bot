@@ -10,8 +10,8 @@ from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, 
 from dotenv import load_dotenv
 
 load_dotenv()
-openai.api_key = os.getenv('OPENAI')
-openai.api_base = "http://localhost:1337/v1"
+openai.api_key = os.getenv('SHUTTLE')
+openai.api_base = "https://api.shuttleai.app/v1"
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
@@ -19,6 +19,10 @@ main = InlineKeyboardMarkup(row_width=2)
 main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
          InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"),
          InlineKeyboardButton("Мероприятия", callback_data="ev_get"))
+topics_s = ReplyKeyboardMarkup(resize_keyboard=True)
+tlib = {'Министерство Образования | Красноярский край': 4, 'Новости гимназии': 2, "Беркут": 8, "РДДМ": 6, "OCTOPUS": 3}
+for key in tlib:
+    topics_s.add(key)
 con = sq.connect('users.db')
 cur = con.cursor()
 wcon = sq.connect('workers.db')
@@ -38,13 +42,14 @@ class BotState(StatesGroup):
     wrkr_wait = State()
     gwrkr_wait = State()
     ev_wait = State()
+    tnum_wait = State()
 
 
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
                 InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
-                InlineKeyboardButton("Мероприятия", callback_data="ev_get"),
-                InlineKeyboardButton("Опубликовать мероприятие", callback_data="ev_create"),
+                # InlineKeyboardButton("Мероприятия", callback_data="ev_get"),
+                # InlineKeyboardButton("Опубликовать мероприятие", callback_data="ev_create"),
                 InlineKeyboardButton("Поменять роль", callback_data="role_change"),
                 InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"),
                 InlineKeyboardButton("Добавить сотрудника", callback_data="wrkr_add"),
@@ -97,7 +102,7 @@ async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         if data['urole'] == 'admin':
             await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:
-Имя00Фамилия00Отчество00Телефон00Должность00Карьера00Опыт(в годах)00Почта""")
+Имя\nФамилия\nОтчество\nТелефон\nДолжность\nКарьера\nОпыт(в годах)\nПочта""")
             await state.set_state(BotState.wrkr_wait.state)
 
         else:
@@ -185,6 +190,23 @@ async def get_events(callback: types.CallbackQuery):
     await bot.send_message(callback.id, "Мероприятие")
 
 
+@dp.callback_query_handler(text="ge")
+async def add_event(callback: types.CallbackQuery):
+    query = f'SELECT * from events'
+    cur.execute(query)
+    mp = cur.fetchall()
+    print("Всего строк:  ", len(mp))
+    print("Вывод каждой строки")
+    text = ""
+    for row in mp:
+        text += "\nНазвание:", row[0]
+        text += "\nНачало:", row[1]
+        text += "\nКонец:", row[2]
+        text += "\nОрганизатор:", row[3]
+        text += "\nТег в Телеграмме:", row[4], "\n\n"
+    await bot.send_message(callback.id, "Мероприятие")
+
+
 @dp.message_handler(commands=["id"])
 async def cmd_id(message: types.Message):
     await message.answer(f"{message.chat.id}")
@@ -233,7 +255,7 @@ async def role_change(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=BotState.wrkr_wait, content_types=['photo'])
 async def wrkr_add(message: types.Message, state: FSMContext):
-    wrkr_i = list(message.caption.split("00"))
+    wrkr_i = list(message.caption.split("\n"))
     if not "@" in wrkr_i[-1] or not "." in wrkr_i[-1]:
         await message.answer(f"Неправильная почта, попробуйте ещё раз")
     else:
@@ -264,7 +286,9 @@ async def wrkr_get(message: types.Message, state: FSMContext):
     photo = InputFile(photo)
 
     await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" Телефон: {phone}, \nДолжность: {work}, "
-                                                                       f"\nКарьера: {education}, \nОпыт: {experience}, \nПочта: {email}")
+                                                                       f"\nКарьера: {education}, \nОпыт: {experience}"
+                                                                       f" (в годах), "
+                                                                       f"\nПочта: {email}")
     await state.finish()
 
 
@@ -306,7 +330,6 @@ async def edit_news(message: types.Message, state: FSMContext):
             Даже без фраз на подобии "Вот, что у меня получилось."."""}
                 , {"role": "user", "content": "Отредактируй эту публикацию: " + message.text}],
             stream=False,
-            max_tokens=300
         ).choices[0].message.content
         data["news_text"] = message.text
         data["edited_news_text"] = edited_news_text
@@ -316,28 +339,58 @@ async def edit_news(message: types.Message, state: FSMContext):
             inline_keyboard=[
                 [InlineKeyboardButton(text="Введенный текст", callback_data="original")],
                 [InlineKeyboardButton(text="Отредактированный текст", callback_data="edited")],
+                [InlineKeyboardButton(text="Отменить", callback_data="cancel")],
             ]
         ))
         await state.set_state(BotState.news_choice.state)
 
 
-async def send_news(callback: types.CallbackQuery, state: FSMContext):
-    # Получаем выбранный пользователем текст новости из контекста пользователя
-    data = await state.get_data()
-    if callback.data == "original":
-        news_text = data["news_text"]
-    else:
-        news_text = data["edited_news_text"]
-    # Публикуем новость в группе
-    await bot.send_message(group_id, news_text)
-    print("Работает!")
-    # Сбрасываем состояние пользователя
-    await state.finish()
 
+async def send_news(message: types.Message, state: FSMContext):
+    da = False
+    # Получаем выбранный пользователем текст новости из контекста пользователя
+    try:
+        _ = tlib[message.text]
+        # Сбрасываем состояние пользователя
+        da = True
+        textmess = await state.get_data()
+        print(textmess)
+        news_text = textmess["text"]
+
+        # Публикуем новость в группе
+        await bot.send_message(group_id, news_text, message_thread_id=tlib[message.text])
+        await message.reply("Успешно отправлено!")
+        await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
+    except:
+        await message.reply("Неверный канал, попробуйте ещё раз")
+    if da:
+        await state.finish()
+
+async def req_news(callback: types.CallbackQuery, state: FSMContext):
+    async with state.proxy() as data:
+        d = await state.get_data()
+        print(d)
+        if callback.data == "original":
+            data["text"] = d["news_text"]
+            await bot.send_message(callback.message.chat.id, "Теперь выберите канал для отправки",
+                                   reply_markup=topics_s)
+            # Сбрасываем состояние пользователя
+            await state.set_state(BotState.tnum_wait.state)
+        elif callback.data == "cancel":
+            await state.finish()
+            await bot.send_message(callback.message.chat.id, "Отменено!")
+            await bot.send_message(callback.message.chat.id, "Панель", reply_markup=admin_panel)
+        else:
+            data["text"] = d["edited_news_text"]
+            await bot.send_message(callback.message.chat.id, "Теперь выберите канал для отправки",
+                                   reply_markup=topics_s)
+            # Сбрасываем состояние пользователя
+            await state.set_state(BotState.tnum_wait.state)
 
 def register_handlers(dp: Dispatcher):
     dp.register_message_handler(edit_news, state=BotState.news_text)
-    dp.register_callback_query_handler(send_news, state=BotState.news_choice)
+    dp.register_message_handler(send_news, state=BotState.tnum_wait)
+    dp.register_callback_query_handler(req_news, state=BotState.news_choice)
     dp.register_message_handler(ttb_save, state=BotState.ttb_wait, content_types=["photo"])
 
 
