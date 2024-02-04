@@ -281,9 +281,7 @@ async def wrkr_get(message: types.Message, state: FSMContext):
     query = f'SELECT name, surname, last_name, phone, work, education, experience, email, photo FROM workers WHERE ' \
             f'(surname, name, last_name) = (?, ?, ?)'
     try:
-        msg_list = list(message.text.split())
-        msg_list = msg_list.append(list(msg_list)[0].split())
-        wcur.execute(query, )
+        wcur.execute(query, tuple(message.text.split()))
         name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
         photo = InputFile(photo)
 
@@ -417,4 +415,4 @@ def register_handlers(dp: Dispatcher):
 
 if __name__ == "__main__":
     register_handlers(dp)
-    executor.start_polling(dp)
+    executor.start_polling(dp, skip_updates=True)
