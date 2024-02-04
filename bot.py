@@ -1,5 +1,6 @@
 import os
 import sqlite3 as sq
+import time
 
 import openai
 from aiogram import Bot, Dispatcher, types, executor
@@ -15,10 +16,9 @@ openai.api_base = "https://api.shuttleai.app/v1"
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
-main = InlineKeyboardMarkup(row_width=2)
+main = InlineKeyboardMarkup(row_width=1)
 main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
-         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"),
-         InlineKeyboardButton("Мероприятия", callback_data="ev_get"))
+         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 topics_s = ReplyKeyboardMarkup(resize_keyboard=True)
 tlib = {'Министерство Образования | Красноярский край': 4, 'Новости гимназии': 2, "Беркут": 8, "РДДМ": 6, "OCTOPUS": 3}
 for key in tlib:
@@ -281,14 +281,25 @@ async def wrkr_add(message: types.Message, state: FSMContext):
 async def wrkr_get(message: types.Message, state: FSMContext):
     query = f'SELECT name, surname, last_name, phone, work, education, experience, email, photo FROM workers WHERE ' \
             f'(surname, name, last_name) = (?, ?, ?)'
-    wcur.execute(query, tuple(message.text.split()))
-    name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
-    photo = InputFile(photo)
+    try:
+        wcur.execute(query, tuple(message.text.split()))
+        name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
+        photo = InputFile(photo)
 
-    await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" Телефон: {phone}, \nДолжность: {work}, "
-                                                                       f"\nКарьера: {education}, \nОпыт: {experience}"
-                                                                       f" (в годах), "
-                                                                       f"\nПочта: {email}")
+        await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" ФИО: {surname} {name} {last_name}"
+                                                                           f"\nТелефон: {phone}"
+                                                                           f", \nДолжность: {work}, "
+                                                                           f"\nКарьера: {education}, \nОпыт: {experience}"
+                                                                           f" (в годах), "
+                                                                           f"\nПочта: {email}")
+
+    except:
+        bmsg = await message.answer("Данного сотрудника нет в базе данных")
+        time.sleep(2.5)
+        await bmsg.delete()
+        await message.answer("Панель", reply_markup=main)
+        await message.delete()
+
     await state.finish()
 
 
@@ -327,7 +338,7 @@ async def edit_news(message: types.Message, state: FSMContext):
             model="gpt-3.5-turbo",
             messages=[{"role": "system", "content": """Ты - редактор публикаций. Ты должен отвечать только 
             отредактированным текстом. Нельзя спрашивать о чём-либо и давать варианты. ТОЛЬКО отредактированный текст.
-            Даже без фраз на подобии "Вот, что у меня получилось."."""}
+            Не используя фраз на подобии "Вот, что у меня получилось."."""}
                 , {"role": "user", "content": "Отредактируй эту публикацию: " + message.text}],
             stream=False,
         ).choices[0].message.content
@@ -345,9 +356,7 @@ async def edit_news(message: types.Message, state: FSMContext):
         await state.set_state(BotState.news_choice.state)
 
 
-
 async def send_news(message: types.Message, state: FSMContext):
-    da = False
     # Получаем выбранный пользователем текст новости из контекста пользователя
     try:
         _ = tlib[message.text]
@@ -359,12 +368,18 @@ async def send_news(message: types.Message, state: FSMContext):
 
         # Публикуем новость в группе
         await bot.send_message(group_id, news_text, message_thread_id=tlib[message.text])
-        await message.reply("Успешно отправлено!")
+        await message.reply("Успешно отправлено!", reply_markup=None)
         await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
     except:
-        await message.reply("Неверный канал, попробуйте ещё раз")
-    if da:
-        await state.finish()
+        ch = await message.reply("Неверный канал", reply_markup=None)
+        time.sleep(0.5)
+        await ch.delete()
+        await message.delete()
+        await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
+    async with state.proxy() as data:
+        await data['msg_to_delete'].delete()
+    await state.finish()
+
 
 async def req_news(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
@@ -372,8 +387,10 @@ async def req_news(callback: types.CallbackQuery, state: FSMContext):
         print(d)
         if callback.data == "original":
             data["text"] = d["news_text"]
-            await bot.send_message(callback.message.chat.id, "Теперь выберите канал для отправки",
-                                   reply_markup=topics_s)
+            data['msg_to_delete'] = await bot.send_message(
+                callback.message.chat.id,
+                "Теперь выберите канал для отправки",
+                reply_markup=topics_s)
             # Сбрасываем состояние пользователя
             await state.set_state(BotState.tnum_wait.state)
         elif callback.data == "cancel":
@@ -382,10 +399,13 @@ async def req_news(callback: types.CallbackQuery, state: FSMContext):
             await bot.send_message(callback.message.chat.id, "Панель", reply_markup=admin_panel)
         else:
             data["text"] = d["edited_news_text"]
-            await bot.send_message(callback.message.chat.id, "Теперь выберите канал для отправки",
-                                   reply_markup=topics_s)
+            data['msg_to_delete'] = await bot.send_message(
+                callback.message.chat.id
+                , "Теперь выберите канал для отправки",
+                reply_markup=topics_s)
             # Сбрасываем состояние пользователя
             await state.set_state(BotState.tnum_wait.state)
+
 
 def register_handlers(dp: Dispatcher):
     dp.register_message_handler(edit_news, state=BotState.news_text)
