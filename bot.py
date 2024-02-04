@@ -85,28 +85,27 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
     await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот",
                          reply_markup=main)
-    async with state.proxy() as data:
-        if role == 'admin':
-            data['urole'] = 'admin'
-            await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
-        elif role == 'planner':
-            data['urole'] = 'planner'
-            await message.answer(f'Здравствуйте планировщик расписаний!', reply_markup=planner_panel)
-        elif role == 'zvr':
-            data['urole'] = 'zvr'
-            await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
+    if role == 'admin':
+        await state.update_data(urole="admin")
+        await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
+    elif role == 'planner':
+        await state.update_data(urole="planner")
+        await message.answer(f'Здравствуйте планировщик расписаний!', reply_markup=planner_panel)
+    elif role == 'zvr':
+        await state.update_data(urole="zvr")
+        await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
 
 
 @dp.callback_query_handler(text="wrkr_add")
 async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin':
-            await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:
+    data = await state.get_data()
+    if data['urole'] == 'admin':
+        await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:
 Имя\nФамилия\nОтчество\nТелефон\nДолжность\nКарьера\nОпыт(в годах)\nПочта""")
-            await state.set_state(BotState.wrkr_wait.state)
+        await state.set_state(BotState.wrkr_wait.state)
 
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
+    else:
+        await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления сотрудника")
 
 
 @dp.callback_query_handler(text="wrkr_get")
@@ -282,7 +281,9 @@ async def wrkr_get(message: types.Message, state: FSMContext):
     query = f'SELECT name, surname, last_name, phone, work, education, experience, email, photo FROM workers WHERE ' \
             f'(surname, name, last_name) = (?, ?, ?)'
     try:
-        wcur.execute(query, tuple(message.text.split()))
+        msg_list = list(message.text.split())
+        msg_list = msg_list.append(list(msg_list)[0].split())
+        wcur.execute(query, )
         name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
         photo = InputFile(photo)
 
