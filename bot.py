@@ -1,8 +1,11 @@
 import os
 import sqlite3 as sq
 import time
-
+from pathlib import Path
+import gdown
 import openai
+import pandas as pd
+import wget
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
@@ -38,6 +41,7 @@ class BotState(StatesGroup):
     ttb_wait = State()
     role_wait = State()
     un_wait = State()
+    ttbch_wait = State()
     report_wait = State()
     wrkr_wait = State()
     gwrkr_wait = State()
@@ -62,6 +66,28 @@ zvr_panel.add(InlineKeyboardButton("Поменять расписание", call
               InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 role_panel = ReplyKeyboardMarkup()
 role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('Редактор новостей')
+
+
+def get_subjects_and_times_by_class(class_name):
+    df = pd.read_excel('./time_table/ttable.xlsx', engine='openpyxl', header=None)
+    # Find the rows where the class name appears
+    class_rows = df[df[0].str.contains(class_name, na=False)].index
+
+    # Extract the subjects and times for the class
+    class_schedule = []
+    for row in class_rows:
+        next_row = row + 1
+        while next_row < len(df) and not df.iloc[next_row][0].startswith('Класс'):
+            subject_time = df.iloc[next_row][0].split(' - ')
+            class_schedule.append({
+                'Урок': subject_time[0],
+                'Время': subject_time[1]
+            })
+            next_row += 1
+
+    # Convert the list of dictionaries to a DataFrame
+    class_schedule_df = pd.DataFrame(class_schedule)
+    return class_schedule_df
 
 
 @dp.message_handler(commands=["start"])
@@ -146,7 +172,7 @@ async def wrkr_add(message: types.Message, state: FSMContext):
 async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         if data['urole'] == 'admin' or data['urole'] == 'planner':
-            await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
+            await bot.send_message(callback.message.chat.id, "Отправьте ссылку на таблицу расписания в Google Диск")
             await state.set_state(BotState.ttb_wait.state)
         else:
             await bot.send_message(callback.message.chat.id, "У вас нет полномочий для редактирования расписания")
@@ -309,13 +335,24 @@ async def role_change(message: types.Message, state: FSMContext):
 
 
 @dp.callback_query_handler(text="ttb")
-async def contacts(callback: types.CallbackQuery):
-    photo = InputFile("time_table/ttable.png")
-    await bot.send_photo(callback.message.chat.id, photo=photo, caption="Расписание:")
+async def ttb_get(callback: types.CallbackQuery, state: FSMContext):
+    await bot.send_message(callback.message.chat.id, "Введите номер и букву класса")
+    await state.set_state(BotState.ttbch_wait.state)
+
+
+@dp.message_handler(state=BotState.ttbch_wait)
+async def ttbfn_get(message: types.Message, state: FSMContext):
+    if "Время" in str(get_subjects_and_times_by_class(message.text)):
+        await message.answer(str(get_subjects_and_times_by_class(message.text)))
+    else:
+        await message.answer("Таблица не найдена")
+    await state.finish()
 
 
 async def ttb_save(message, state: FSMContext):
-    await message.photo[-1].download('./time_table/ttable.png')
+    if Path('./time_table/ttable.xlsx').is_file():
+        os.remove('./time_table/ttable.xlsx')
+    wget.download(message.text + '/export?exportFormat=xlsx', './time_table/ttable.xlsx', bar=None)
     await message.answer("Расписание успешно изменено!")
     await state.finish()
 
@@ -410,7 +447,7 @@ def register_handlers(dp: Dispatcher):
     dp.register_message_handler(edit_news, state=BotState.news_text)
     dp.register_message_handler(send_news, state=BotState.tnum_wait)
     dp.register_callback_query_handler(req_news, state=BotState.news_choice)
-    dp.register_message_handler(ttb_save, state=BotState.ttb_wait, content_types=["photo"])
+    dp.register_message_handler(ttb_save, state=BotState.ttb_wait)
 
 
 if __name__ == "__main__":

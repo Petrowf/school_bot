@@ -1,25 +1,25 @@
-import openai
-from dotenv import load_dotenv
-import os
-load_dotenv()
-openai.api_key = os.getenv('OPENAI')
-# Установка параметров прокси-сервера
-proxy = {
-    "http": "http://188.114.96.6"
+from openpyxl import Workbook
 
-}
-# Установка API-ключа
-openai.api_key = "<ваш API-ключ>"
-# Создание запроса с использованием прокси
-response = openai.ChatCompletion.create(
-    model="gpt-4",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Who won the world series in 2020?"},
-        {"role": "assistant", "content": "The Los Angeles Dodgers won the World Series in 2020."},
-        {"role": "user", "content": "Where was it played?"}
-    ],
-    proxy=proxy
-)
-# Обработка ответа
-print(response.choices[0].message.content)
+# Create a new workbook and select the active sheet
+wb = Workbook()
+ws = wb.active
+
+# Define the data for the schedule
+data = """
+Класс 8A
+Математика - 23:00-0:00
+Русский - 0:00-3:00
+Класс 8B
+Математика - 22:00-0:00
+Русский - 0:00-3:00
+"""
+
+# Split the data into lines
+lines = data.strip().split('\n')
+
+# Write the data to the worksheet
+for i, line in enumerate(lines, start=1):
+    ws.cell(row=i, column=1).value = line
+
+# Save the workbook to an Excel file
+wb.save("school_schedule_custom.xlsx")
