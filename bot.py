@@ -115,7 +115,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         cur.execute(query, (id, new_user_name, chat_id, name, surname, access))
         con.commit()
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
-    await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот. Я скоро буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi",
+    await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот. Я скоро буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi. \nХочешь узнать, что я умею? Напиши /help",
                          reply_markup=main)
     if role == 'admin':
         await state.update_data(urole="admin")
