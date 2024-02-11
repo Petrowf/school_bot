@@ -64,6 +64,38 @@ role_panel = ReplyKeyboardMarkup()
 role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('Редактор новостей')
 
 
+@dp.message_handler(commands=["help"])
+async def help(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if data['urole'] == 'admin':
+        await message.answer("""Поменять расписание:
+\tВы должны отправить фото актуального расписания
+Опубликовать новость:
+\t1 шаг: Отправьте боту текст новости
+\t2 шаг: Выберите какой текст отправлять: исходный, отредактированный или отменить отправку
+\t3 шаг: Если вы всё-таки выбрали отправить сообщение, то выберете группу для отправки 
+Поменять роль:
+\t1 шаг: выберете новую роль для человека
+\t2 шаг: напишите его tg username (по @)
+Отправить замечание разработчикам:
+	Напишите замечание 
+Добавить сотрудника:
+	Напишите информацию о сотруднике в сообщенной ботом форме
+Расписание
+	Бот отправит вам фото актуального расписания
+Информация о сотруднике:
+	Напишите ФИО, а бот вам о нем расскажет
+""")
+
+    if data['urole'] == 'common':
+        await message.answer("""Кнопки
+
+Расписание: Бот отправит вам фото актуального расписания
+Информация о сотруднике: Напишите ФИО, а бот вам о нем расскажет
+
+""")
+
+
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message, state: FSMContext):
     try:
@@ -83,7 +115,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         cur.execute(query, (id, new_user_name, chat_id, name, surname, access))
         con.commit()
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
-    await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот",
+    await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот. Я скоро буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi",
                          reply_markup=main)
     if role == 'admin':
         await state.update_data(urole="admin")
@@ -94,6 +126,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
     elif role == 'zvr':
         await state.update_data(urole="zvr")
         await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
+    else:
+        await state.update_data(urole="common")
 
 
 @dp.callback_query_handler(text="wrkr_add")
