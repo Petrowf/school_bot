@@ -1,7 +1,8 @@
 
 # Школьный помощник
-![Frame 1](https://github.com/Petrowf/school_bot/assets/155871506/3d895fd9-b7af-4d99-aea4-055c1b8880e6)
+
 ## Это умный Telegram бот, созданный для упрощения взаимодействия школьников и сотрудников с различными аспектами школьной жизни.
+![banner](https://github.com/Petrowf/school_bot/assets/155871506/de092a43-c5d4-4644-904a-ebc430c3814c)
 
 ## Как начать использовать:
 
