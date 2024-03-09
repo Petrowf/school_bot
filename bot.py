@@ -1,7 +1,7 @@
+# Импорт необходимых библиотек
 import os
 import sqlite3 as sq
 import time
-
 import openai
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -10,28 +10,39 @@ from aiogram.dispatcher.filters.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
+# Загрузка переменных окружения из .env файла
 load_dotenv()
+
+# Инициализация API ключа и базы данных
 openai.api_key = os.getenv('SHUTTLE')
 openai.api_base = "https://api.shuttleai.app/v1"
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
+
+# Инициализация диспетчера с хранилищем состояний
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
+
+# Создание клавиатур для взаимодействия с ботом
 main = InlineKeyboardMarkup(row_width=1)
 main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
          InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
 topics_s = ReplyKeyboardMarkup(resize_keyboard=True)
-tlib = {'Министерство Образования | Красноярский край': 4, 'Новости гимназии': 2, "Беркут": 8, "РДДМ": 6, "OCTOPUS": 3}
+tlib = {'Министерство Образования | Красноярский край': 4,
+        'Новости гимназии': 2, "Беркут": 8,
+        "РДДМ": 6, "OCTOPUS": 3}
 for key in tlib:
     topics_s.add(key)
+
+# Соединение с базами данных
 con = sq.connect('users.db')
 cur = con.cursor()
 wcon = sq.connect('workers.db')
 wcur = wcon.cursor()
-
 evcn = sq.connect('events.db')
 evcur = wcon.cursor()
 
 
+# Определение состояний для FSM
 class BotState(StatesGroup):
     news_text = State()
     news_choice = State()
@@ -45,15 +56,15 @@ class BotState(StatesGroup):
     tnum_wait = State()
 
 
+# Создание панелей администратора и других ролей
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
                 InlineKeyboardButton("Опубликовать новость", callback_data="nws_change"),
-                # InlineKeyboardButton("Мероприятия", callback_data="ev_get"),
-                # InlineKeyboardButton("Опубликовать мероприятие", callback_data="ev_create"),
                 InlineKeyboardButton("Поменять роль", callback_data="role_change"),
                 InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"),
                 InlineKeyboardButton("Добавить сотрудника", callback_data="wrkr_add"),
                 InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
+
 planner_panel = InlineKeyboardMarkup()
 planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
                   InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
@@ -115,8 +126,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
         cur.execute(query, (id, new_user_name, chat_id, name, surname, access))
         con.commit()
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
-    await message.answer(f"{message.from_user.first_name}, добро пожаловать в школьный бот. Я скоро буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi. \nХочешь узнать, что я умею? Напиши /help",
-                         reply_markup=main)
+    await message.answer(
+        f"{message.from_user.first_name}, добро пожаловать в школьный бот. Я скоро буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi. \nХочешь узнать, что я умею? Напиши /help",
+        reply_markup=main)
     if role == 'admin':
         await state.update_data(urole="admin")
         await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
@@ -134,8 +146,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
 async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     if data['urole'] == 'admin':
-        await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:
-Имя\nФамилия\nОтчество\nТелефон\nДолжность\nКарьера\nОпыт(в годах)\nПочта""")
+        await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:\n
+ФИО\nТелефон\nДолжность\nКарьера\nОпыт(в годах)\nПочта""")
         await state.set_state(BotState.wrkr_wait.state)
 
     else:
@@ -286,40 +298,49 @@ async def role_change(message: types.Message, state: FSMContext):
     await state.finish()
 
 
-@dp.message_handler(state=BotState.wrkr_wait, content_types=['photo'])
+@dp.message_handler(state=BotState.wrkr_wait, content_types=["text", 'photo'])
 async def wrkr_add(message: types.Message, state: FSMContext):
-    wrkr_i = list(message.caption.split("\n"))
-    if not "@" in wrkr_i[-1] or not "." in wrkr_i[-1]:
-        await message.answer(f"Неправильная почта, попробуйте ещё раз")
+    if not message.photo:
+        await message.reply("Отправьте анкету с фотографией")
     else:
-        wrkr_i[6] = int(wrkr_i[6])
-        tkn = message.photo[-1].file_id
-        path = f'./wrkrs/{tkn}'
-        wrkr_i += [path]
-        await message.photo[-1].download(path)
-        query = 'INSERT INTO workers ( name, surname, last_name, ' \
-                'phone, work, education, experience, email, photo) VALUES ' \
-                '(?, ?, ' \
-                '?, ' \
-                '?, ?, ?, ?, ?, ?);'
-        wcur.execute(query, wrkr_i)
-        wcon.commit()
-        query = f'SELECT id FROM workers WHERE phone={wrkr_i[3]}'
-        wcur.execute(query)
-        await message.answer(f"Сотрудник успешно добавлен")
-        await state.finish()
+        wrkr_i = list(message.caption.split("\n"))
+        print("1212")
+        if not "@" in wrkr_i[-1] or not "." in wrkr_i[-1]:
+            await message.answer(f"Неправильная почта, попробуйте ещё раз")
+
+        else:
+            print(wrkr_i)
+            wrkr_i[0:1] = (wrkr_i[0].split(" "))
+            print(wrkr_i)
+            wrkr_i[6] = int(wrkr_i[6])
+            print(wrkr_i)
+            tkn = message.photo[-1].file_id
+            path = f'./wrkrs/{tkn}'
+            wrkr_i += [path]
+            await message.photo[-1].download(path)
+            query = 'INSERT INTO workers (' \
+                    'last_name, name, surname, phone, work, education, experience, email, photo) VALUES ' \
+                    '(?, ?, ' \
+                    '?, ' \
+                    '?, ?, ?, ?, ?, ?);'
+            wcur.execute(query, wrkr_i)
+            wcon.commit()
+            query = f'SELECT id FROM workers WHERE phone={wrkr_i[3]}'
+            wcur.execute(query)
+            await message.answer(f"Сотрудник успешно добавлен")
+            await state.finish()
 
 
 @dp.message_handler(state=BotState.gwrkr_wait)
 async def wrkr_get(message: types.Message, state: FSMContext):
-    query = f'SELECT name, surname, last_name, phone, work, education, experience, email, photo FROM workers WHERE ' \
-            f'(surname, name, last_name) = (?, ?, ?)'
+    query = f'SELECT name, surname, last_name,phone, work, education, experience, email, photo FROM workers WHERE ' \
+            f'(last_name, name, surname) = (?, ?, ?)'
     try:
         wcur.execute(query, tuple(message.text.split()))
         name, surname, last_name, phone, work, education, experience, email, photo = wcur.fetchone()
         photo = InputFile(photo)
 
-        await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" ФИО: {surname} {name} {last_name}"
+        await bot.send_photo(chat_id=message.chat.id, photo=photo, caption=f" ФИО: {last_name} {name} {surname}"
                                                                            f"\nТелефон: {phone}"
                                                                            f", \nДолжность: {work}, "
                                                                            f"\nКарьера: {education}, \nОпыт: {experience}"
@@ -450,3 +471,4 @@ def register_handlers(dp: Dispatcher):
 if __name__ == "__main__":
     register_handlers(dp)
     executor.start_polling(dp, skip_updates=True)
+
