@@ -2,6 +2,7 @@
 import os
 import sqlite3 as sq
 import time
+import anthropic
 import openai
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -13,9 +14,10 @@ from dotenv import load_dotenv
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 
-# Инициализация API ключа и базы данных
-openai.api_key = os.getenv('SHUTTLE')
-openai.api_base = "https://api.shuttleai.app/v1"
+client = anthropic.Anthropic(
+    # defaults to os.environ.get("ANTHROPIC_API_KEY")
+    api_key=os.getenv('CLAUDE'),
+)
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
 
@@ -77,8 +79,9 @@ role_panel.add('Школьник/Сотрудник').add('Администра�
 
 @dp.message_handler(commands=["help"])
 async def help(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    if data['urole'] == 'admin':
+    query = f'SELECT access FROM users WHERE id={message.from_user.id}'
+    cur.execute(query)
+    if cur.fetchone()[0] == 'admin':
         await message.answer("""Поменять расписание:
 \tВы должны отправить фото актуального расписания
 Опубликовать новость:
@@ -98,7 +101,7 @@ async def help(message: types.Message, state: FSMContext):
 	Напишите ФИО, а бот вам о нем расскажет
 """)
 
-    if data['urole'] == 'common':
+    if cur.fetchone()[0] == 'common':
         await message.answer("""Кнопки
 
 Расписание: Бот отправит вам фото актуального расписания
@@ -130,22 +133,18 @@ async def cmd_start(message: types.Message, state: FSMContext):
         f"{message.from_user.first_name}, добро пожаловать в школьный бот. Я скоро буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi. \nХочешь узнать, что я умею? Напиши /help",
         reply_markup=main)
     if role == 'admin':
-        await state.update_data(urole="admin")
         await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
     elif role == 'planner':
-        await state.update_data(urole="planner")
-        await message.answer(f'Здравствуйте планировщик расписаний!', reply_markup=planner_panel)
+        await message.answer(f'Здравствуйте Планировщик расписаний!', reply_markup=planner_panel)
     elif role == 'zvr':
-        await state.update_data(urole="zvr")
         await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
-    else:
-        await state.update_data(urole="common")
 
 
 @dp.callback_query_handler(text="wrkr_add")
 async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    if data['urole'] == 'admin':
+    query = f'SELECT access FROM users WHERE id={callback.from_user.id}'
+    cur.execute(query)
+    if cur.fetchone()[0] == 'admin':
         await bot.send_message(callback.message.chat.id, """Напишите информацию о сотруднике с фото в указанной форме:\n
 ФИО\nТелефон\nДолжность\nКарьера\nОпыт(в годах)\nПочта""")
         await state.set_state(BotState.wrkr_wait.state)
@@ -163,18 +162,19 @@ async def wait_eworker(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query_handler(text="ae")
 async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin':
-            await bot.send_message(callback.message.chat.id, """Напишите информацию о мероприятии таким форматом:
-            Название
-            Дата начала
-            Дата конца
-            Организатор
-            Телеграмм тэг""")
-            await state.set_state(BotState.ev_wait.state)
+    query = f'SELECT access FROM users WHERE id={callback.from_user.id}'
+    cur.execute(query)
+    if cur.fetchone()[0] == 'admin':
+        await bot.send_message(callback.message.chat.id, """Напишите информацию о мероприятии таким форматом:
+        Название
+        Дата начала
+        Дата конца
+        Организатор
+        Телеграмм тэг""")
+        await state.set_state(BotState.ev_wait.state)
 
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления мероприятия")
+    else:
+        await bot.send_message(callback.message.chat.id, "У вас нет полномочий для добавления мероприятия")
 
 
 @dp.message_handler(state=BotState.ev_wait)
@@ -190,66 +190,36 @@ async def wrkr_add(message: types.Message, state: FSMContext):
 
 @dp.callback_query_handler(text="tmtb_change")
 async def wait_photo(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin' or data['urole'] == 'planner':
-            await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
-            await state.set_state(BotState.ttb_wait.state)
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для редактирования расписания")
+    query = f'SELECT access FROM users WHERE id={callback.from_user.id}'
+    cur.execute(query)
+    if cur.fetchone()[0] == 'admin' or cur.fetchone()[0] == 'planner':
+        await bot.send_message(callback.message.chat.id, "Отправьте фото расписания")
+        await state.set_state(BotState.ttb_wait.state)
+    else:
+        await bot.send_message(callback.message.chat.id, "У вас нет полномочий для редактирования расписания")
 
 
 @dp.callback_query_handler(text="report")
 async def get_report(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin':
-            await bot.send_message(callback.message.chat.id, "Отправьте описание жалобы")
-            await state.set_state(BotState.report_wait.state)
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для отправки жалобы")
+    query = f'SELECT access FROM users WHERE id={callback.from_user.id}'
+    cur.execute(query)
+    if cur.fetchone()[0] == 'admin':
+        await bot.send_message(callback.message.chat.id, "Отправьте описание жалобы")
+        await state.set_state(BotState.report_wait.state)
+    else:
+        await bot.send_message(callback.message.chat.id, "У вас нет полномочий для отправки жалобы")
 
 
 @dp.callback_query_handler(text="role_change")
 async def wait_role(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin':
-            await bot.send_message(callback.message.chat.id, "Выберите роль пользователя", reply_markup=role_panel)
-            await state.set_state(BotState.role_wait.state)
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для изменения роли пользователя")
-
-
-@dp.callback_query_handler(text="ge")
-async def get_events(callback: types.CallbackQuery):
-    query = f'SELECT * from events'
+    query = f'SELECT access FROM users WHERE id={callback.from_user.id}'
     cur.execute(query)
-    mp = cur.fetchall()
-    print("Всего строк:  ", len(mp))
-    print("Вывод каждой строки")
-    text = ""
-    for row in mp:
-        text += "\nНазвание:", row[0]
-        text += "\nНачало:", row[1]
-        text += "\nКонец:", row[2]
-        text += "\nОрганизатор:", row[3]
-        text += "\nТег в Телеграмме:", row[4], "\n\n"
-    await bot.send_message(callback.id, "Мероприятие")
 
-
-@dp.callback_query_handler(text="ge")
-async def add_event(callback: types.CallbackQuery):
-    query = f'SELECT * from events'
-    cur.execute(query)
-    mp = cur.fetchall()
-    print("Всего строк:  ", len(mp))
-    print("Вывод каждой строки")
-    text = ""
-    for row in mp:
-        text += "\nНазвание:", row[0]
-        text += "\nНачало:", row[1]
-        text += "\nКонец:", row[2]
-        text += "\nОрганизатор:", row[3]
-        text += "\nТег в Телеграмме:", row[4], "\n\n"
-    await bot.send_message(callback.id, "Мероприятие")
+    if cur.fetchone()[0] == 'admin':
+        await bot.send_message(callback.message.chat.id, "Выберите роль пользователя", reply_markup=role_panel)
+        await state.set_state(BotState.role_wait.state)
+    else:
+        await bot.send_message(callback.message.chat.id, "У вас нет полномочий для изменения роли пользователя")
 
 
 @dp.message_handler(commands=["id"])
@@ -304,16 +274,12 @@ async def wrkr_add(message: types.Message, state: FSMContext):
         await message.reply("Отправьте анкету с фотографией")
     else:
         wrkr_i = list(message.caption.split("\n"))
-        print("1212")
         if not "@" in wrkr_i[-1] or not "." in wrkr_i[-1]:
             await message.answer(f"Неправильная почта, попробуйте ещё раз")
 
         else:
-            print(wrkr_i)
             wrkr_i[0:1] = (wrkr_i[0].split(" "))
-            print(wrkr_i)
             wrkr_i[6] = int(wrkr_i[6])
-            print(wrkr_i)
             tkn = message.photo[-1].file_id
             path = f'./wrkrs/{tkn}'
             wrkr_i += [path]
@@ -377,25 +343,27 @@ async def ttb_save(message, state: FSMContext):
 
 @dp.callback_query_handler(text="nws_change")
 async def ask_for_news(callback: types.CallbackQuery, state: FSMContext):
-    async with state.proxy() as data:
-        if data['urole'] == 'admin' or data['urole'] == 'zvr':
-            await bot.send_message(callback.message.chat.id, "Введите текст новости:")
-            # Сохраняем текст новости в контексте пользователя
-            await state.set_state(BotState.news_text.state)
-        else:
-            await bot.send_message(callback.message.chat.id, "У вас нет полномочий для публикации новостей")
+    query = f'SELECT access FROM users WHERE id={callback.from_user.id}'
+    cur.execute(query)
+    if cur.fetchone()[0] == 'admin' or cur.fetchone()[0] == 'zvr':
+        await bot.send_message(callback.message.chat.id, "Введите текст новости:")
+        # Сохраняем текст новости в контексте пользователя
+        await state.set_state(BotState.news_text.state)
+    else:
+        await bot.send_message(callback.message.chat.id, "У вас нет полномочий для публикации новостей")
 
 
 async def edit_news(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        edited_news_text = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": """Ты - редактор публикаций. Ты должен отвечать только 
-            отредактированным текстом. Нельзя спрашивать о чём-либо и давать варианты. ТОЛЬКО отредактированный текст.
-            Не используя фраз на подобии "Вот, что у меня получилось."."""}
+        edited_news_text = client.messages.create(
+            model="claude-3-opus-20240229",
+            messages=[{"role": "user", "content": """Ты - редактор публикаций. Ты должен отвечать только 
+            развёрнутым отредактированным грамотным текстом. Нельзя спрашивать о чём-либо и давать варианты. ТОЛЬКО отредактированный текст.
+            Не используя фраз на подобии "Вот, что у меня получилось."."""},
+                      {"role": "assistant", "content": "Хорошо, я постараюсь"}
                 , {"role": "user", "content": "Отредактируй эту публикацию: " + message.text}],
-            stream=False,
-        ).choices[0].message.content
+            max_tokens=2048
+        ).content[0].text
         data["news_text"] = message.text
         data["edited_news_text"] = edited_news_text
         await bot.send_message(message.chat.id, f"Отредактированный текст: {edited_news_text}")
@@ -417,7 +385,6 @@ async def send_news(message: types.Message, state: FSMContext):
         # Сбрасываем состояние пользователя
         da = True
         textmess = await state.get_data()
-        print(textmess)
         news_text = textmess["text"]
 
         # Публикуем новость в группе
@@ -438,7 +405,6 @@ async def send_news(message: types.Message, state: FSMContext):
 async def req_news(callback: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         d = await state.get_data()
-        print(d)
         if callback.data == "original":
             data["text"] = d["news_text"]
             data['msg_to_delete'] = await bot.send_message(
@@ -471,4 +437,3 @@ def register_handlers(dp: Dispatcher):
 if __name__ == "__main__":
     register_handlers(dp)
     executor.start_polling(dp, skip_updates=True)
-
