@@ -3,38 +3,31 @@ import asyncio
 import os
 import sqlite3 as sq
 import time
+from typing import List, Union
+
 import anthropic
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import StatesGroup, State
-from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton, \
-    ReplyKeyboardRemove
+from aiogram.dispatcher.handler import CancelHandler
+from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram.types import ReplyKeyboardMarkup, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env файла
 load_dotenv()
-
+tlib = {'Городские новости': 4,
+        'Новости гимназии': 2, "Беркут": 6,
+        "Движение первых": 68, "OCTOPUS": 3}
 client = anthropic.Anthropic(
     # defaults to os.environ.get("ANTHROPIC_API_KEY")
     api_key=os.getenv('CLAUDE'),
 )
 bot = Bot(os.getenv('TOKEN'))
 group_id = os.getenv('GROUP_ID')
-
 # Инициализация диспетчера с хранилищем состояний
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
-cancel_up = ReplyKeyboardMarkup(row_width=1, resize_keyboard=True).add("Отмена")
-# Создание клавиатур для взаимодействия с ботом
-main = InlineKeyboardMarkup(row_width=1)
-main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
-         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
-topics_s = ReplyKeyboardMarkup(resize_keyboard=True)
-tlib = {'Городские новости': 4,
-        'Новости гимназии': 2, "Беркут": 6,
-        "Движение первых": 68, "OCTOPUS": 3}
-for key in tlib:
-    topics_s.add(key)
 
 # Соединение с базами данных
 con = sq.connect('users.db')
@@ -43,6 +36,12 @@ wcon = sq.connect('workers.db')
 wcur = wcon.cursor()
 evcn = sq.connect('events.db')
 evcur = wcon.cursor()
+
+
+
+
+
+
 
 
 # Определение состояний для FSM
@@ -59,6 +58,22 @@ class BotState(StatesGroup):
     tnum_wait = State()
 
 
+async def show_panel(msg, chat_id, state):
+    time.sleep(0.5)
+    await msg.delete()
+    await bot.send_message(chat_id, "Панель", reply_markup=admin_panel)
+    await state.finish()
+
+
+topics_s = ReplyKeyboardMarkup(resize_keyboard=True)
+for key in tlib:
+    topics_s.add(key)
+topics_s.add("Отмена")
+# Создание клавиатур для взаимодействия с ботом
+main = InlineKeyboardMarkup(row_width=1)
+main.add(InlineKeyboardButton("Расписание", callback_data="ttb"),
+         InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
+cancel_up = ReplyKeyboardMarkup(row_width=1, resize_keyboard=True).add("Отмена")
 # Создание панелей администратора и других ролей
 admin_panel = InlineKeyboardMarkup(row_width=2)
 admin_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
@@ -66,16 +81,44 @@ admin_panel.add(InlineKeyboardButton("Поменять расписание", ca
                 InlineKeyboardButton("Поменять роль", callback_data="role_change"),
                 InlineKeyboardButton("Отправить замечание разработчикам", callback_data="report"),
                 InlineKeyboardButton("Добавить сотрудника", callback_data="wrkr_add"),
-                InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
-
-planner_panel = InlineKeyboardMarkup()
-planner_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
-                  InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
-zvr_panel = InlineKeyboardMarkup()
-zvr_panel.add(InlineKeyboardButton("Поменять расписание", callback_data="tmtb_change"),
-              InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"))
+                InlineKeyboardButton("Информация о сотруднике", callback_data="wrkr_get"),
+                InlineKeyboardButton("Расписание", callback_data="ttb"))
 role_panel = ReplyKeyboardMarkup()
 role_panel.add('Школьник/Сотрудник').add('Администратор').add('Планировщик').add('Редактор новостей').add("Отмена")
+
+
+class AlbumMiddleware(BaseMiddleware):
+    """This middleware is for capturing media groups."""
+
+    album_data: dict = {}
+
+    def __init__(self, latency: Union[int, float] = 0.01):
+        """
+        You can provide custom latency to make sure
+        albums are handled properly in highload.
+        """
+        self.latency = latency
+        super().__init__()
+
+    async def on_process_message(self, message: types.Message, data: dict):
+        if not message.media_group_id:
+            return
+
+        try:
+            self.album_data[message.media_group_id].append(message)
+
+            raise CancelHandler()  # Tell aiogram to cancel handler for this group element
+        except KeyError:
+            self.album_data[message.media_group_id] = [message]
+            await asyncio.sleep(self.latency)
+
+            message.conf["is_last"] = True
+            data["album"] = self.album_data[message.media_group_id]
+
+    async def on_post_process_message(self, message: types.Message, result: dict, data: dict):
+        """Clean up after handling our album."""
+        if message.media_group_id and message.conf.get("is_last"):
+            del self.album_data[message.media_group_id]
 
 
 @dp.message_handler(commands=["help"])
@@ -130,18 +173,17 @@ async def cmd_start(message: types.Message, state: FSMContext):
         cur.execute(query, (id, new_user_name, chat_id, name, surname, access))
         con.commit()
     await message.answer_sticker('CAACAgIAAxkBAAMUZWGdovgTgW-qmp7noVjZrrRF2Y0AAgUAA8A2TxP5al-agmtNdTME')
-    await message.answer(
-        f"{message.from_user.first_name}, добро пожаловать в школьный бот. "
-        f"Я буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi."
-        f" \nХочешь узнать, что я умею? Напиши /help",
-        reply_markup=main)
-    if role == 'admin':
-        await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
-    elif role == 'planner':
-        await message.answer(f'Здравствуйте Планировщик расписаний!', reply_markup=planner_panel)
-    elif role == 'zvr':
-        await message.answer(f'Здравствуйте Зам. по воспитательной работе!', reply_markup=planner_panel)
 
+    if role == 'admin':
+        await message.answer(
+            f"{message.from_user.first_name}, добро пожаловать в школьный бот.")
+        await message.answer(f'Здравствуйте администратор!', reply_markup=admin_panel)
+    else:
+        await message.answer(
+            f"{message.from_user.first_name}, добро пожаловать в школьный бот. "
+            f"Я буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi."
+            f" \nХочешь узнать, что я умею? Напиши /help",
+            reply_markup=main)
 
 @dp.callback_query_handler(text="wrkr_add")
 async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
@@ -234,8 +276,8 @@ async def role_set(message: types.Message, state: FSMContext):
                 await state.finish()
                 await state.set_state(BotState.un_wait.state)
             else:
-                await message.answer("Задана неправильная роль. Попробуйте ещё раз", reply_markup=admin_panel)
-                await state.finish()
+                msg = await message.answer("Задана неправильная роль. Попробуйте ещё раз", reply_markup=admin_panel)
+                await show_panel(msg, message.chat.id, state)
 
 
 @dp.message_handler(state=BotState.un_wait)
@@ -294,17 +336,15 @@ async def cmd_clear(message: types.Message):
         for i in range(message.message_id, 0, -1):
             await bot.delete_message(message.from_user.id, i)
     except:
-        await bot.send_message(message.chat.id, "Всё удалено!")
+        pass
 
 
 @dp.message_handler(state=BotState.gwrkr_wait)
 async def wrkr_get(message: types.Message, state: FSMContext):
     if message.text.lower() == "отмена":
-        await state.finish()
-        ch = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
-        time.sleep(0.5)
-        await ch.delete()
-        await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
+        msg = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
+        await show_panel(msg, message.chat.id, state)
+
     else:
         query = f'SELECT name, surname, last_name,phone, work, education, experience, email, photo FROM workers WHERE ' \
                 f'(last_name, name, surname) = (?, ?, ?)'
@@ -319,25 +359,20 @@ async def wrkr_get(message: types.Message, state: FSMContext):
                                                                                f"\nКарьера: {education}, \nОпыт: {experience}"
                                                                                f" (в годах), "
                                                                                f"\nПочта: {email}")
-
+            await state.finish()
         except:
-            bmsg = await message.answer("Данного сотрудника нет в базе данных")
-            time.sleep(2.5)
-            await bmsg.delete()
-            await message.answer("Панель", reply_markup=main)
-            await message.delete()
+            msg = await message.answer("Данного сотрудника нет в базе данных")
+            await show_panel(msg, message.chat.id, state)
 
-    await state.finish()
+
 
 
 @dp.message_handler(state=BotState.report_wait)
 async def report(message: types.Message, state: FSMContext):
     if message.text.lower() == "отмена":
         await state.finish()
-        ch = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
-        time.sleep(0.5)
-        await ch.delete()
-        await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
+        msg = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
+        await show_panel(msg, message.chat.id, state)
     else:
         await bot.send_message(1109823137, "Вам отправлена жалоба: " + message.text)
     await state.finish()
@@ -347,23 +382,26 @@ async def report(message: types.Message, state: FSMContext):
 async def time_table(callback: types.CallbackQuery):
     photo = InputFile("time_table/ttable.png")
     await bot.send_photo(callback.message.chat.id, photo=photo, caption="Расписание:")
+    await bot.send_message(callback.message.chat.id, "Панель", reply_markup=admin_panel)
 
 
 async def ttb_save(message, state: FSMContext):
-    if message.text.lower() == "отмена":
+    if message.photo:
+        await message.photo[-1].download('./time_table/ttable.png')
+        ch = await message.answer("Расписание успешно изменено!")
+        time.sleep(0.5)
+        await ch.delete()
+        await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
+        await state.finish()
+    elif message.text.lower() == "отмена":
         await state.finish()
         ch = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
         time.sleep(0.5)
         await ch.delete()
         await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
         await state.finish()
-    elif message.photo:
-        await message.photo[-1].download('./time_table/ttable.png')
-        await message.answer("Расписание успешно изменено!")
-        await state.finish()
     else:
         await message.answer("Отправьте фото расписания")
-
 
 
 @dp.callback_query_handler(text="nws_change")
@@ -379,7 +417,10 @@ async def ask_for_news(callback: types.CallbackQuery, state: FSMContext):
         await bot.send_message(callback.message.chat.id, "У вас нет полномочий для публикации новостей")
 
 
-async def edit_news(message: types.Message, state: FSMContext):
+media_groups = {}
+
+
+async def edit_news(message: types.Message, state: FSMContext, album: List[types.Message] = None):
     if message.text and message.text.lower() == "отмена":
         await state.finish()
         ch = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
@@ -390,13 +431,33 @@ async def edit_news(message: types.Message, state: FSMContext):
     else:
         async with state.proxy() as data:
             if isinstance(message.media_group_id, str):
-                # Это альбом
-                photos = message.photo
-                data["media"] = types.MediaGroup()
-                for photo in photos:
-                    data["media"].attach_photo(photo.file_id)
-                text = message.caption
-                print(f"MC: {text}")
+                media_group = types.MediaGroup()
+                if message.photo:
+                    for index, obj in enumerate(album):
+                        if obj.photo:
+                            file_id = obj.photo[-1].file_id
+                        else:
+                            file_id = obj[obj.content_type].file_id
+                        if index == 1 and message.caption:
+                            media_group.attach(
+                                {"media": file_id, "type": obj.content_type, "caption": message.caption})
+                        else:
+                            media_group.attach({"media": file_id, "type": obj.content_type})
+                if message.video:
+                    for index, obj in enumerate(album):
+                        if obj.photo:
+                            file_id = obj.video.file_id
+                        else:
+                            file_id = obj[obj.content_type].file_id
+                        if index == 1 and message.caption:
+                            media_group.attach(
+                                {"media": file_id, "type": obj.content_type})
+                        else:
+                            media_group.attach({"media": file_id, "type": obj.content_type})
+                data['media'] = media_group
+                if message.caption:
+                    text = message.caption
+                    print(f"MC: {text}")
             elif message.photo:
                 data["photo"] = message.photo[-1].file_id
                 text = message.caption
@@ -409,9 +470,9 @@ async def edit_news(message: types.Message, state: FSMContext):
                 messages=[
                     {"role": "user", "content": """Ты - редактор публикаций. 
                     Ты должен отвечать только развёрнутым отредактированным грамотным текстом.
-                     Нельзя спрашивать о чём-либо и давать варианты.
-                      ТОЛЬКО отредактированный текст.
-                       Не используя фраз на подобии "Вот, что у меня получилось."."""},
+                    Нельзя спрашивать о чём-либо и давать варианты. Отвечаешь только отредактированным текстом 
+                    и ничего лишнего. Добавляешь смайлики для разнообразия текста.
+                    Не используя фраз на подобии "Вот, что у меня получилось."."""},
                     {"role": "assistant", "content": "Хорошо, я постараюсь"},
                     {"role": "user", "content": "Отредактируй эту публикацию: " + str(text)}
                 ],
@@ -432,31 +493,42 @@ async def edit_news(message: types.Message, state: FSMContext):
 
 
 async def send_news(message: types.Message, state: FSMContext):
-    # Получаем выбранный пользователем текст новости из контекста пользователя
-        _ = tlib[message.text]
-        textmess = await state.get_data()
-        news_text = textmess["text"]
-        if textmess['media']:
-            await bot.send_media_group(group_id, media=textmess['media'], message_thread_id=tlib[message.text])
-            await bot.send_message(group_id, news_text, message_thread_id=tlib[message.text])
-        elif isinstance(textmess["photo"], str):
-            await bot.send_photo(group_id, caption=news_text, message_thread_id=tlib[message.text],
-                                 photo=textmess['photo'])
+    try:
+        if message.text.lower() == "отмена":
+            await state.finish()
+            msg = await bot.send_message(message.chat.id, "Отменено!", reply_markup=types.ReplyKeyboardRemove())
+            time.sleep(0.5)
+            await msg.delete()
+            await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
         else:
-            await bot.send_message(group_id, news_text, message_thread_id=tlib[message.text])
+            # Получаем выбранный пользователем текст новости из контекста пользователя
+            textmess = await state.get_data()
+            news_text = textmess["text"]
+            if 'media' in textmess.keys():
+                print(type(textmess['media'][0]))
+                await bot.send_media_group(group_id, media=textmess['media'], message_thread_id=tlib[message.text])
+                await bot.send_message(group_id, news_text, message_thread_id=tlib[message.text])
+            elif 'photo' in textmess.keys():
+                await bot.send_photo(group_id, caption=news_text, message_thread_id=tlib[message.text],
+                                     photo=textmess['photo'])
+            else:
+                await bot.send_message(group_id, news_text, message_thread_id=tlib[message.text])
 
-        await message.reply("Успешно отправлено!", reply_markup=types.ReplyKeyboardRemove())
-        await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
-    # except:
-    #     ch = await message.reply("Неверный канал", reply_markup=types.ReplyKeyboardRemove())
-    #     time.sleep(0.5)
-    #     await ch.delete()
-    #     await message.delete()
-    #     await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
+            msg = await message.reply("Успешно отправлено!", reply_markup=types.ReplyKeyboardRemove())
+            time.sleep(0.5)
+            await msg.delete()
+            await state.finish()
+            await bot.send_message(message.chat.id, "Панель", reply_markup=admin_panel)
 
-    # async with state.proxy() as data:
-    #     await data['msg_to_delete'].delete()
-    #     await state.finish()
+    except:
+        ch = await message.reply("Неверный канал", reply_markup=types.ReplyKeyboardRemove())
+        time.sleep(0.5)
+        await ch.delete()
+        await bot.send_message(message.chat.id, "Панель", reply_markup=main)
+
+    async with state.proxy() as data:
+        await data['msg_to_delete'].delete()
+        await state.finish()
 
 
 async def req_news(callback: types.CallbackQuery, state: FSMContext):
@@ -470,7 +542,10 @@ async def req_news(callback: types.CallbackQuery, state: FSMContext):
             await state.set_state(BotState.tnum_wait.state)
         elif callback.data == "cancel":
             await state.finish()
-            await bot.send_message(callback.message.chat.id, "Отменено!")
+            msg = await bot.send_message(callback.message.chat.id, "Отменено!")
+            time.sleep(0.5)
+            await msg.delete()
+            await state.finish()
             await bot.send_message(callback.message.chat.id, "Панель", reply_markup=admin_panel)
         else:
             data["text"] = d["edited_news_text"]
@@ -488,5 +563,6 @@ def register_handlers(dp: Dispatcher):
 
 
 if __name__ == "__main__":
+    dp.middleware.setup(AlbumMiddleware())
     register_handlers(dp)
     executor.start_polling(dp, skip_updates=True)
