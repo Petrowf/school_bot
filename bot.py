@@ -38,12 +38,6 @@ evcn = sq.connect('events.db')
 evcur = wcon.cursor()
 
 
-
-
-
-
-
-
 # Определение состояний для FSM
 class BotState(StatesGroup):
     news_text = State()
@@ -184,6 +178,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             f"Я буду публиковать новости здесь: https://t.me/+bph2-lwMswpmNGJi."
             f" \nХочешь узнать, что я умею? Напиши /help",
             reply_markup=main)
+
 
 @dp.callback_query_handler(text="wrkr_add")
 async def wait_worker(callback: types.CallbackQuery, state: FSMContext):
@@ -363,8 +358,6 @@ async def wrkr_get(message: types.Message, state: FSMContext):
         except:
             msg = await message.answer("Данного сотрудника нет в базе данных")
             await show_panel(msg, message.chat.id, state)
-
-
 
 
 @dp.message_handler(state=BotState.report_wait)
